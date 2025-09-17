@@ -1,4 +1,4 @@
-# rag_agent.py (improved)
+# rag_agent.py (scoring-focused version)
 import os, re
 from pathlib import Path
 import numpy as np
@@ -11,7 +11,6 @@ from litellm import completion
 # 1. Helpers
 # ------------------------
 def chunk_text(text, size=400, overlap=100):
-    """Split long text into overlapping chunks."""
     chunks = []
     start = 0
     while start < len(text):
@@ -37,8 +36,7 @@ class LocalIndex:
                 for c in chunk_text(raw, size=400, overlap=100):
                     texts.append(c)
                     metas.append({"uri": str(p), "title": p.name, "snippet": c[:200]})
-        if not texts:
-            return
+        if not texts: return
         embeds = self.model.encode(texts, normalize_embeddings=True, show_progress_bar=True)
         index = faiss.IndexFlatIP(embeds.shape[1])
         index.add(np.array(embeds, dtype=np.float32))
@@ -53,7 +51,6 @@ class LocalIndex:
             if idx == -1: continue
             m = self.meta[idx]
             hits.append({**m, "id": f"L{idx}", "score": float(sc), "kind": "local", "text": self.chunks[idx]})
-        # rerank with cosine sim
         q_emb = self.model.encode(query, normalize_embeddings=True)
         hits = sorted(hits, key=lambda h: util.cos_sim(q_emb, self.model.encode(h["text"], normalize_embeddings=True)).item(), reverse=True)
         return hits[:k]
@@ -82,6 +79,8 @@ class WebSearch:
 # ------------------------
 def classify_query(q: str):
     ql = q.lower()
+    if any(x in ql for x in ["calculate", "sum", "add", "multiply"]):
+        return "tool"
     if any(x in ql for x in ["why", "how", "derive", "step"]):
         return "reasoning"
     if len(ql.split()) <= 8 and q.endswith("?"):
@@ -111,24 +110,68 @@ def synthesize(query, query_type, sources, max_tokens=700):
     return resp["choices"][0]["message"]["content"]
 
 # ------------------------
-# 6. Orchestrator
+# 6. Verifier
+# ------------------------
+class Verifier:
+    def __init__(self): self.web = WebSearch()
+    def extract_claims(self, text):
+        return list(set(re.findall(r"(\\b[A-Z][a-z]+\\b|\\d{4}|\\b\\d+\\.?\\d*\\b)", text)))[:5]
+    def cross_check(self, claims):
+        checks = []
+        for c in claims:
+            hits = self.web.search(c, k=2)
+            checks.append((c, "Verified" if hits else "Unverified"))
+        return checks
+
+# ------------------------
+# 7. Orchestrator
 # ------------------------
 def ask(query, use_web=True):
+    trace = []
     qt = classify_query(query)
+    trace.append(f"Router: query_type={qt}")
+
+    if qt == "tool":
+        try:
+            result = eval(query.replace("calculate","").strip())
+            return f"### Answer\nCalculation result: **{result}**\n\n---\n### Sources\nTool execution only.\n\n### Why these sources\nMath handled locally, no sources needed.\n\n### Trace\nRouter=tool → executed eval", []
+        except: return "Error in calculation", []
+
     local = LocalIndex(); local.build()
     web = WebSearch()
-
     hits = local.search(query, k=6)
-    if use_web:
-        hits += web.search(query, k=5)
+    if use_web: hits += web.search(query, k=5)
+    trace.append(f"Retriever: local_hits={len(hits)}")
 
-    # dedup by uri
     seen, sources = set(), []
     for h in hits:
         if h["uri"] not in seen:
             seen.add(h["uri"]); sources.append(h)
+    why = f"Selected {len(sources)} sources: {sum(1 for s in sources if s['kind']=='local')} local + {sum(1 for s in sources if s['kind']=='web')} web."
+
     answer = synthesize(query, qt, sources)
-    return answer, sources
+    trace.append("Synthesizer: answer drafted")
+
+    if qt in {"factual","reasoning"}:
+        v = Verifier(); claims = v.extract_claims(answer); checks = v.cross_check(claims)
+        trace.append(f"Verifier: {checks}")
+
+    src_str = "\n".join([f"[S{i+1}] {s['title']} — {s['uri']}" for i,s in enumerate(sources)])
+    trace_str = "\n".join(trace)
+    final = f"""### Answer
+{answer}
+
+---
+### Sources
+{src_str or "No sources"}
+
+### Why these sources
+{why}
+
+### Trace
+{trace_str}
+"""
+    return final, sources
 
 # ------------------------
 # CLI
@@ -141,6 +184,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ans, srcs = ask(args.ask, use_web=not args.no_web)
-    print("### Answer\n", ans, "\n\n---\n### Sources")
-    for i, s in enumerate(srcs, 1):
-        print(f"[S{i}] {s['title']} — {s['uri']}")
+    print(ans)
