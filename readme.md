@@ -1,32 +1,34 @@
-# Create README.md for the single-file RAG agent
-readme = r"""# `rag_agent.py` — Single-File Agentic RAG
+# Agentic RAG – Single File Implementation
 
-A **one-file, minimal Retrieval-Augmented Generation (RAG)** assistant that reads your local notes, searches the live web, and synthesizes a **source-grounded** answer with inline citations.
-
-- ✅ Single Python file (`rag_agent.py`)
-- 🔎 Local vector search (FAISS + sentence-transformers)
-- 🌐 Web search (DuckDuckGo)
-- 🧠 LLM synthesis via [LiteLLM](https://github.com/BerriAI/litellm) (OpenAI/Azure/Anthropic/Groq compatible)
-- 🧭 Simple query router: factual / open / reasoning
-- 📎 Citations with a sources list
+A **one-file, multi-agent Retrieval-Augmented Generation (RAG)** pipeline that dynamically adapts to different query types and behaves like a **knowledge companion** instead of a static Q&A bot.
 
 ---
 
-## 1) Quick Start
+## ✨ Features
 
-```bash
-# 1) Create a virtual env (optional but recommended)
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+- **Multi-Agent Workflow**  
+  Router → Planner → Retriever (Local + Web) → Synthesizer → Verifier → Finalizer  
 
-# 2) Install deps
-pip install faiss-cpu sentence-transformers duckduckgo-search litellm
+- **Hybrid Retrieval**  
+  - Local knowledge base (`.txt` / `.md` in `./data/`)  
+  - Live web information via DuckDuckGo  
+  - Deduplication + reranking for precision  
 
-# 3) Put your local files in ./data (txt/md)
-mkdir -p data && echo "My local note" > data/example.md
+- **Dynamic Query Handling**  
+  - **Factual** → concise, trusted sources  
+  - **Open-ended** → synthesize multiple perspectives  
+  - **Reasoning-heavy** → show intermediate steps  
+  - **Tool** → calculator for numeric queries  
 
-# 4) Configure your LLM key (example: OpenAI via LiteLLM)
-export OPENAI_API_KEY=sk-...       # Windows PowerShell: $env:OPENAI_API_KEY="sk-..."
-# (LiteLLM will pick the key; default model in the script is gpt-4o-mini)
+- **Transparency & Trust**  
+  - Inline `[S#]` citations for every fact  
+  - **Why these sources** section explaining retrieval  
+  - **Trace** of agent steps (router, retriever, synthesizer, verifier)  
+  - **Verifier report**: cross-checks claims against live web  
 
-# 5) Ask a question
-python rag_agent.py --ask "Summarize my local notes about project X"
+---
+
+## 📂 Structure
+
+All logic is in **one file**: `agentic_rag.py`  
+
